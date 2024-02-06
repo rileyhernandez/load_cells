@@ -10,11 +10,14 @@ from viam.resource.registry import Registry, ResourceCreatorRegistration
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import ResourceName
 from viam.components.sensor import Sensor
+from viam.logging import getLogger
 
 from Phidget22.Phidget import *
 from Phidget22.Devices.VoltageRatioInput import *
 import time, asyncio
 import numpy as np
+
+LOGGER = getLogger(__name__)
 
 class LoadCell(Sensor):
     MODEL: ClassVar[Model] = Model(ModelFamily('test-bench', 'sensor'), 'load-cell')
@@ -27,15 +30,16 @@ class LoadCell(Sensor):
         # Phidget set up
         sensor.cells = [VoltageRatioInput() for cell in range(4)]
         for cell in range(len(sensor.cells)):
-            sensor.cells[cell].setChannel()
+            sensor.cells[cell].setChannel(cell)
             sensor.cells[cell].openWaitForAttachment(1000)
             sensor.cells[cell].setDataInterval(sensor.cells[cell].getMinDataInterval())
         sensor.offset = 0
-        sensor.coefficients = np.array([[ 1.05367982e+07],
-        [ 5.58626571e+06],
-        [ 1.22174287e+07],
-        [ 1.08556060e+07],
-        [-2.24938354e+03]])
+        # sensor.coefficients = np.array([[ 1.05367982e+07],
+        # [ 5.58626571e+06],
+        # [ 1.22174287e+07],
+        # [ 1.08556060e+07],
+        # [-2.24938354e+03]])
+        sensor.coefficients = [1.05367982e+07, 5.58626571e+06, 1.22174287e+07, 1.08556060e+07, -2.24938354e+03]
         return sensor
     
     async def get_readings(self, *, extra: Optional[Mapping[str, Any]] = None, timeout: Optional[float] = None,
@@ -92,21 +96,23 @@ class LoadCell(Sensor):
 
         A, b = np.array(A), np.array(b)
         x = np.linalg.solve(A, b)
+        x.reshape(1, -1).tolist()[0]
         self.coefficients = x
         await self.tare()
     
     async def live_weigh(self):
         readings = await self.get_cell_readings()
-        weights = [readings[reading]*self.coefficients for reading in range(len(readings))]
-        return float(sum(weights)-self.offset)
+        weights = [readings[reading]*self.coefficients[reading] for reading in range(len(readings))]
+        return sum(weights)-self.offset
     
     async def weigh(self, samples=100, sample_rate=25, outliers_removed=30):
         weights = []
         for sample in range(samples):
             reading = await self.live_weigh()
             weights += [reading]
-            asyncio.sleep(1/sample_rate)
+            await asyncio.sleep(1/sample_rate)
         outliers = []
+        
         for outlier in range(outliers_removed//2):
             outliers += [max(weights), min(weights)]
         weight = (sum(weights)-sum(outliers))/(len(weights)-len(outliers))
