@@ -11,10 +11,11 @@ from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import ResourceName
 from viam.components.sensor import Sensor
 from viam.logging import getLogger
+from viam.utils import ValueTypes
 
 from Phidget22.Phidget import *
 from Phidget22.Devices.VoltageRatioInput import *
-import time, asyncio
+import asyncio
 import numpy as np
 
 LOGGER = getLogger(__name__)
@@ -34,13 +35,21 @@ class LoadCell(Sensor):
             sensor.cells[cell].openWaitForAttachment(1000)
             sensor.cells[cell].setDataInterval(sensor.cells[cell].getMinDataInterval())
         sensor.offset = 0
-        # sensor.coefficients = np.array([[ 1.05367982e+07],
-        # [ 5.58626571e+06],
-        # [ 1.22174287e+07],
-        # [ 1.08556060e+07],
-        # [-2.24938354e+03]])
         sensor.coefficients = [1.05367982e+07, 5.58626571e+06, 1.22174287e+07, 1.08556060e+07, -2.24938354e+03]
         return sensor
+  
+    async def do_command(self, command: Mapping[str, ValueTypes], *, timeout: float | None = None, **kwargs) -> Mapping[str, ValueTypes]:
+        match command['command']:
+            case 'tare':
+                method = self.tare
+            case 'calibrate':
+                method = self.calibrate
+            case 'live weigh':
+                method = self.live_weigh
+        await method()
+        return command
+        
+
     
     async def get_readings(self, *, extra: Optional[Mapping[str, Any]] = None, timeout: Optional[float] = None,
                             **kwargs) -> Mapping[str, Any]:
@@ -63,10 +72,6 @@ class LoadCell(Sensor):
     async def tare(self):
         """Tares the system by recalibrating the offset value
         """
-        try:
-            input('Clear scale and press Enter')
-        except(Exception, KeyboardInterrupt):
-            pass
         self.offset = await self.weigh()
 
     async def calibrate(self, test_mass=393.8):
@@ -74,6 +79,7 @@ class LoadCell(Sensor):
         load cell variation and assembly tolerance.
         Then the system is tared.
         """
+        # Conducts weight trials and collects data
         A, b = [], []
         for trial in range(len(self.cells)):
             try:
@@ -84,37 +90,51 @@ class LoadCell(Sensor):
             trial_readings += [1]
             A += [trial_readings]
             b += [[test_mass]]
-        
         try:
             input('Remove test mass and press Enter')
         except(Exception, KeyboardInterrupt):
             pass
+        # Conducts final trial (no weight)
         trial_readings = await self.get_cell_averages()
         trial_readings += [1]
         A += [trial_readings]
         b += [[0]]
 
+        # Inputs trial data into matrices and solves 'Ax = b'
         A, b = np.array(A), np.array(b)
         x = np.linalg.solve(A, b)
+        # Converts x into a list and saves it as an attribute
         x.reshape(1, -1).tolist()[0]
         self.coefficients = x
+
+        # Tares scale and ends method
         await self.tare()
+        return {'msg': 'successful'}
     
     async def live_weigh(self):
+        """Measures instantaneous weight
+        """
+        # Collects instantaneous cell readings
         readings = await self.get_cell_readings()
-        weights = [readings[reading]*self.coefficients[reading] for reading in range(len(readings))]
-        return sum(weights)-self.offset
+        # Takes dot product of readings and coefficients to calculate 
+        weight = sum([readings[reading]*self.coefficients[reading] for reading in range(len(readings))])
+        # Returns weight minus offset (from tare)
+        return weight-self.offset
     
     async def weigh(self, samples=100, sample_rate=25, outliers_removed=30):
+        """Takes the average weight over a given time period, at a given sample rate, while removing outliers
+        """
+        # Collects weight measurement data over given sample period
         weights = []
         for sample in range(samples):
             reading = await self.live_weigh()
             weights += [reading]
             await asyncio.sleep(1/sample_rate)
+        # Finds outliers in the data set
         outliers = []
-        
         for outlier in range(outliers_removed//2):
             outliers += [max(weights), min(weights)]
+        # Takes the average of the data set, removing outliers
         weight = (sum(weights)-sum(outliers))/(len(weights)-len(outliers))
         return weight
     
