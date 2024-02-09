@@ -36,18 +36,20 @@ class LoadCell(Sensor):
             sensor.cells[cell].setDataInterval(sensor.cells[cell].getMinDataInterval())
         sensor.offset = 0
         sensor.coefficients = [1.05367982e+07, 5.58626571e+06, 1.22174287e+07, 1.08556060e+07, -2.24938354e+03]
+        sensor.data = []
         return sensor
   
     async def do_command(self, command: Mapping[str, ValueTypes], *, timeout: float | None = None, **kwargs) -> Mapping[str, ValueTypes]:
         match command['command']:
             case 'tare':
-                method = self.tare
+                method = await self.tare()
             case 'calibrate':
-                method = self.calibrate
-            case 'live weigh':
-                method = self.live_weigh
-        await method()
-        return command
+                method = await self.calibrate()
+            case 'live-weigh':
+                method = await self.live_weigh()
+            case 'weigh-until':
+                method = await self.weigh_until(command['serving'])
+        return method
         
 
     
@@ -137,6 +139,34 @@ class LoadCell(Sensor):
         # Takes the average of the data set, removing outliers
         weight = (sum(weights)-sum(outliers))/(len(weights)-len(outliers))
         return weight
+    
+    async def weigh_until(self, serving, samples=100, sample_rate=25, outliers_removed=30):
+        """Takes the pruned average weight over at given settings until the target is reached
+        """
+        def prune(lst, n):
+            """Function that takes in a data set and a removes a given number of outliers.
+            The average of the remaining data set is returned.
+            """
+            outliers = []
+            for i in range(n):
+                outliers += [max(lst), min(lst)]
+            return (sum(lst)-sum(outliers))/(len(lst)-len(outliers))
+
+        last_n = []
+        curr_weight = await self.weigh()
+        target = curr_weight-serving
+        for sample in range(samples):
+            reading = await self.live_weigh()
+            last_n += [reading]
+            await asyncio.sleep(1/sample_rate)
+        while curr_weight > target:
+            curr_weight = await self.live_weigh()
+            last_n = last_n[1:] + [curr_weight]
+            avg = prune(last_n, outliers_removed)
+            asyncio.sleep(1/sample_rate)
+        return 'Dispensed ' + str(serving) + ' g'
+
+        
     
 
 Registry.register_resource_creator(

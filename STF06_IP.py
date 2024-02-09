@@ -8,6 +8,10 @@ from viam.resource.registry import Registry, ResourceCreatorRegistration
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import ResourceName
 from tcp_client import tcp_write
+from viam.utils import ValueTypes
+from viam.logging import getLogger
+
+LOGGER = getLogger(__name__)
 
 HEADER = '\x00\x07'
 CR = '\r'
@@ -16,14 +20,16 @@ DRIVE_TCP_PORT = 7776
 
 class STF06IP(Motor, Reconfigurable):
     MODEL: ClassVar[Model] = Model(ModelFamily('test-bench', 'motor'), 'stf06-ip')
-    ip_address: str
+    id: int
     steps: int
     max_current: int
     last_pos: float
+    ip_address: str
 
     @classmethod
     def new(cls, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]) -> Self:
         motor = cls(config.name)
+        motor.id = config.attributes.fields['id'].number_value
         motor.ip_address = config.attributes.fields['ip_address'].string_value
         motor.steps = int(config.attributes.fields['steps'].number_value)
         motor.max_current = int(config.attributes.fields["max_current"].number_value)
@@ -32,12 +38,12 @@ class STF06IP(Motor, Reconfigurable):
             print(f"{dependencies}")
         return motor
 
-    @classmethod
-    def validate_config(cls, config: ComponentConfig) -> Sequence[Any]:
-        ip_address = config.attributes.fields['ip_address'].string_value
-        if ip_address == '':
-            raise Exception("Please input a valid IP address")
-        return [ip_address]
+    # @classmethod
+    # def validate_config(cls, config: ComponentConfig) -> Sequence[Any]:
+    #     ip_address = config.attributes.fields['ip_address'].string_value
+    #     if ip_address == '':
+    #         raise Exception("Please input a valid IP address")
+    #     return [ip_address]
 
     def reconfigure(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         self.ip_address = config.attributes.fields['ip_address'].string_value
@@ -49,7 +55,7 @@ class STF06IP(Motor, Reconfigurable):
         message = HEADER + message + CR
         resp = await tcp_write(self.ip_address, DRIVE_TCP_PORT, message)
         print(resp)
-        if resp[2] == '?':
+        if resp is None or resp[2] == '?':
             raise Exception('Invalid message sent to drive: ' + message + 'Resp: ' + resp)
         return resp[5:-1]
 
@@ -65,6 +71,12 @@ class STF06IP(Motor, Reconfigurable):
         else:
             await self.drive_write(f'MD')
 
+    async def do_command(self, command: Mapping[str, ValueTypes], *, timeout: float | None = None, **kwargs) -> Mapping[str, ValueTypes]:
+        match command['command']:
+            case 'test':
+                await self.go_for(200, 20)
+        return command
+    
     async def go_for(self, rpm: float, revolutions: float, *, extra: Optional[Dict[str, Any]] = None,
                      timeout: Optional[float] = None, **kwargs):
         await self.drive_write(f'VE{round(rpm/60,2)}')
