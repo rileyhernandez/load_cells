@@ -40,16 +40,18 @@ class LoadCell(Sensor):
         return sensor
   
     async def do_command(self, command: Mapping[str, ValueTypes], *, timeout: float | None = None, **kwargs) -> Mapping[str, ValueTypes]:
+        msg = {'msg': 'filler message'}
         match command['command']:
             case 'tare':
-                method = await self.tare()
+                await self.tare()
             case 'calibrate':
-                method = await self.calibrate()
+                await self.calibrate()
             case 'live-weigh':
-                method = await self.live_weigh()
+                weight = await self.live_weigh()
+                msg = {'live-weigh': weight}
             case 'weigh-until':
-                method = await self.weigh_until(command['serving'])
-        return method
+                await self.weigh_until(command['serving'])
+        return msg
         
 
     
@@ -75,6 +77,7 @@ class LoadCell(Sensor):
         """Tares the system by recalibrating the offset value
         """
         self.offset = await self.weigh()
+        return 'Tared'
 
     async def calibrate(self, test_mass=393.8):
         """Calibrates the load cell system to determine what its coefficients are in order to account for 

@@ -72,16 +72,27 @@ class STF06IP(Motor, Reconfigurable):
             await self.drive_write(f'MD')
 
     async def do_command(self, command: Mapping[str, ValueTypes], *, timeout: float | None = None, **kwargs) -> Mapping[str, ValueTypes]:
+        msg = {'msg': 'filler'}
         match command['command']:
             case 'test':
+                await self.stop()
                 await self.go_for(200, 20)
-        return command
+            case "change-speed":
+                await self.change_speed(command["rpm"])
+                msg = {"rpm.": command["rpm"]}
+        return msg
     
     async def go_for(self, rpm: float, revolutions: float, *, extra: Optional[Dict[str, Any]] = None,
                      timeout: Optional[float] = None, **kwargs):
-        await self.drive_write(f'VE{round(rpm/60,2)}')
-        await self.drive_write(f'DI{int(self.steps * revolutions)}')
-        await self.drive_write(f'FL')
+        # To prevent sending nonpositive RPMs
+        try:
+            rpm = max(round(rpm/60,2), 1)
+
+            await self.drive_write(f'VE{rpm}')
+            await self.drive_write(f'DI{int(self.steps * revolutions)}')
+            await self.drive_write(f'FL')
+        except Exception as e:
+            print("DEBUG: ", e)
 
     async def go_to(self, rpm: float, position_revolutions: float, *, extra: Optional[Dict[str, Any]] = None,
                     timeout: Optional[float] = None, **kwargs):
@@ -112,6 +123,7 @@ class STF06IP(Motor, Reconfigurable):
     
     async def change_speed(self, rpm: float, *, extra: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **kwargs):
         await self.drive_write(f'VE{round(rpm/60, 2)}')
+        return rpm
 
     async def stop(self, *, extra: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **kwargs):
         await self.drive_write(f'SK')
