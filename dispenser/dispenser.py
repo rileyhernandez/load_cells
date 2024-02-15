@@ -132,12 +132,13 @@ class Dispenser:
             weights = [self.data['weight'][weight]-avg for weight in range(len(self.data['weight']))]
         else:
             weights = self.data['weight']
+        plt.close()
         plt.plot(times, weights)
-        plt.xlabel('Time [seconds]')
-        plt.ylabel('Weight [grams]')
-        plt.title('Weight vs Time')
+        plt.xlabel('Time')
+        plt.ylabel('Average Weight')
+        plt.title('Average Weight vs Time')
         plt.grid()
-        plt.show()
+        plt.savefig('data.png')
 
     def reset_data(self):
         """Clears the dataset
@@ -155,7 +156,7 @@ class Dispenser:
             self.data['weight'] += [weight]
             time.sleep(timestep)
     
-    async def test_avg(self, timestep=0.1, samples=100, outliers_removed=2, n=10):
+    async def test_avg(self, sample_rate=25, samples=100, outlier_ratio=0.50):
         """Collects data over an inputted amount of samples recording each data point
         as the average of the last 10 weights and removing outliers"""
         def prune(weights, outliers_removed):
@@ -165,13 +166,13 @@ class Dispenser:
             return (sum(weights)-sum(outliers))/(len(weights)-len(outliers))
         self.reset_data()
         last_n = []
-        for i in range(n):
+        for i in range(samples):
             now = await self.live_weigh()
             last_n += [now]
-            time.sleep(timestep)
+            time.sleep(1/sample_rate)
         for i in range(samples):
             curr_weight = await self.live_weigh()
             last_n = last_n[1:] + [curr_weight]
-            avg = prune(last_n, outliers_removed)
+            avg = prune(last_n, outlier_ratio)
             self.log_data(time.time(), avg)
-            time.sleep(timestep)
+            time.sleep(1/sample_rate)
